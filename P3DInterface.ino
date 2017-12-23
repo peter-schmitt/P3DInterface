@@ -7,6 +7,7 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <gfxfont.h>
+#include <RotaryEncoder.h>
 
 // MISC ---------------------------------------------------------
 #define TEST_STRING "---"
@@ -15,7 +16,6 @@
 #define GEAR_UP 1
 #define GEAR_DN 0
 
-#define OLED_DRAW_INTERVAL 5000UL     // milliseconds
 #define OLED_RESET 35
 Adafruit_SSD1306 display(OLED_RESET);
 Elegoo_TFTLCD tft(LCD_CS, LCD_CD, LCD_WR, LCD_RD, LCD_RESET);
@@ -25,13 +25,16 @@ Elegoo_TFTLCD tft(LCD_CS, LCD_CD, LCD_WR, LCD_RD, LCD_RESET);
 // NORMAL PROGRAM VARIABLES --------------------------------------
 byte CodeIn = 0;// The normal declearations go here
 bool change = "true";
+
 unsigned long OLED_draw_timer = millis();
+const long OLED_delay = 5000;
+
 int comm_select = NONE;   // which radio value is selected for changing
 unsigned long comm_select_last_action;// we need to track when the last movement for comm_select was to reset selection
 int ap_select = AP_NONE;     // which autopilot value is selected for changing
 
 // debouncer variables for switches
-int debounceDelay = 10;
+int debounceDelay = 50;
 unsigned long lastDebounceTime = 0;
 
 // SWITCH POSITION VARIABLES --------------------------------------
@@ -39,16 +42,19 @@ int rotary_freq_decimal_clk_state = 0;
 int rotary_freq_decimal_clk_last_state = 0;
 int rotary_freq_decimal_dt_state = 0;
 int rotary_freq_decimal_dt_last_state = 0;
+RotaryEncoder rot_freq_decimal_encoder(ROTARY_FREQ_DECIMAL_CLK, ROTARY_FREQ_DECIMAL_DT);
 
 int rotary_freq_fraction_clk_state = 0;
 int rotary_freq_fraction_clk_last_state = 0;
 int rotary_freq_fraction_dt_state = 0;
 int rotary_freq_fraction_dt_last_state = 0;
+RotaryEncoder rot_freq_fraction_encoder(ROTARY_FREQ_FRACTION_CLK, ROTARY_FREQ_FRACTION_DT);
 
 int rotary_ap_clk_state = 0;
 int rotary_ap_clk_last_state = 0;
 int rotary_ap_dt_state = 0;
 int rotary_ap_dt_last_state = 0;
+RotaryEncoder rot_ap_encoder(ROTARY_AP_CLK, ROTARY_AP_DT);
 
 int switch_gear = GEAR_DN;
 unsigned long ap_last_action;// we need to track when the last movement for ap was to reset selection
@@ -93,11 +99,6 @@ String AileronTrim = TEST_STRING;
 void setup() {
   Serial.begin(115200);
   pins_init();
-
-  // ROTARIES' INIT -----------------------------------------
-  rotary_freq_decimal_clk_last_state = digitalRead(ROTARY_FREQ_DECIMAL_CLK);
-  rotary_freq_fraction_clk_last_state = digitalRead(ROTARY_FREQ_FRACTION_CLK);
-  rotary_ap_clk_last_state = digitalRead(ROTARY_AP_CLK);
 
   // DISPLAYS' INIT -----------------------------------------
   oled_init();
@@ -193,60 +194,59 @@ void OTHER() {
   button_press_comm_selects();
   reset_selects();
 
-  // only draw the display at certain intervals and only if the rotaries are not needed
-  if (millis() + OLED_DRAW_INTERVAL > OLED_draw_timer and !(ap_select == AP_NONE and comm_select == NONE)) {
-    OLED_2();
+  if (millis() - OLED_draw_timer >= OLED_delay) {
+    OLED_1();
     OLED_draw_timer = millis();
   }
 }
 
 void scan_rotary_encoders() {
+  // ROTARIES' INIT -----------------------------------------
+
+  rot_freq_decimal_encoder.tick();
+  rot_freq_fraction_encoder.tick();
+  rot_ap_encoder.tick();
+
   // ROTARY ENCODER FOR COMM DECIMAL PART
-  rotary_freq_decimal_clk_state = digitalRead(ROTARY_FREQ_DECIMAL_CLK);
+  rotary_freq_decimal_clk_state = rot_freq_decimal_encoder.getPosition();
   if (rotary_freq_decimal_clk_state != rotary_freq_decimal_clk_last_state) {
-    lastDebounceTime = millis();
     // If the outputB state is different to the outputA state, that means the encoder is rotating clockwise
-    if (digitalRead(ROTARY_FREQ_DECIMAL_DT) != rotary_freq_decimal_clk_state) {
-      comm_rotary_increment(true);
-    } else {
-      comm_rotary_decrement(true);
+    if (rotary_freq_decimal_clk_state < rotary_freq_decimal_clk_last_state) {
+      comm_rotary_increment_decimal();
     }
+    if (rotary_freq_decimal_clk_state > rotary_freq_decimal_clk_last_state) {
+      comm_rotary_decrement_decimal();
+    }
+    rotary_freq_decimal_clk_last_state = rotary_freq_decimal_clk_state;
     comm_select_last_action = millis();
-  }
-  while (rotary_freq_decimal_clk_state != rotary_freq_decimal_clk_last_state or millis() - lastDebounceTime < debounceDelay) {
-    rotary_freq_decimal_clk_state = digitalRead(ROTARY_FREQ_DECIMAL_CLK);
   }
 
   // ROTARY ENCODER FOR COMM FRACTION PART
-  rotary_freq_fraction_clk_state = digitalRead(ROTARY_FREQ_FRACTION_CLK);
+  rotary_freq_fraction_clk_state = rot_freq_fraction_encoder.getPosition();
   if (rotary_freq_fraction_clk_state != rotary_freq_fraction_clk_last_state) {
-    lastDebounceTime = millis();
     // If the outputB state is different to the outputA state, that means the encoder is rotating clockwise
-    if (digitalRead(ROTARY_FREQ_FRACTION_DT) != rotary_freq_fraction_clk_state) {
-      comm_rotary_increment(false);
-    } else {
-      comm_rotary_decrement(false);
+    if (rotary_freq_fraction_clk_state < rotary_freq_fraction_clk_last_state) {
+      comm_rotary_increment_fraction();
     }
+    if (rotary_freq_fraction_clk_state > rotary_freq_fraction_clk_last_state) {
+      comm_rotary_decrement_fraction();
+    }
+    rotary_freq_fraction_clk_last_state = rotary_freq_fraction_clk_state;
     comm_select_last_action = millis();
-  }
-  while (rotary_freq_fraction_clk_state != rotary_freq_fraction_clk_last_state or millis() - lastDebounceTime < debounceDelay) {
-    rotary_freq_fraction_clk_state = digitalRead(ROTARY_FREQ_FRACTION_CLK);
   }
 
   // ROTARY ENCODER FOR AP
-  rotary_ap_clk_state = digitalRead(ROTARY_AP_CLK);
+  rotary_ap_clk_state = rot_ap_encoder.getPosition();
   if (rotary_ap_clk_state != rotary_ap_clk_last_state) {
-    lastDebounceTime = millis();
     // If the outputB state is different to the outputA state, that means the encoder is rotating clockwise
-    if (digitalRead(ROTARY_AP_DT) != rotary_ap_clk_state) {
+    if (rotary_ap_clk_state < rotary_ap_clk_last_state) {
       ap_rotary_increment();
-    } else {
+    }
+    if (rotary_ap_clk_state > rotary_ap_clk_last_state) {
       ap_rotary_decrement();
     }
+    rotary_ap_clk_last_state = rotary_ap_clk_state;
     ap_last_action = millis();
-  }
-  while (rotary_ap_clk_state != rotary_ap_clk_last_state or millis() - lastDebounceTime < debounceDelay) {
-    rotary_ap_clk_state = digitalRead(ROTARY_AP_CLK);
   }
 }
 
@@ -353,184 +353,200 @@ void button_press_comm_selects() {
     }
   }
 
-  while (digitalRead(BUTTON_COMM_SELECT_COM_1) == LOW or digitalRead(BUTTON_COMM_SELECT_COM_2) == LOW or digitalRead(BUTTON_COMM_SELECT_NAV_1) == LOW or digitalRead(BUTTON_COMM_SELECT_NAV_2) == LOW or digitalRead(BUTTON_SBY_ACT_SWITCH) == LOW or millis() - lastDebounceTime < debounceDelay) {
-    Serial.println("low");
+  while (digitalRead(BUTTON_COMM_SELECT_COM_1) == LOW or digitalRead(BUTTON_COMM_SELECT_COM_2) == LOW or digitalRead(BUTTON_COMM_SELECT_NAV_1) == LOW or digitalRead(BUTTON_COMM_SELECT_NAV_2) == LOW or digitalRead(BUTTON_SBY_ACT_SWITCH) == LOW or millis() - lastDebounceTime < debounceDelay);
+}
+
+// increasing a comm rotary can mean a lot of things.
+// we need to find out which setting is activated and increase exactly that.
+void comm_rotary_increment_decimal() {
+  String adf;
+  String adf2;
+  String tt;
+
+  switch (comm_select) {
+    case COM_1:
+      Serial.println("A02");
+      break;
+    case COM_2:
+      Serial.println("A08");
+      break;
+    case NAV_1:
+      Serial.println("A14");
+      break;
+    case NAV_2:
+      Serial.println("A20");
+      break;
+    case ADF_1:
+      adf = ADF1freq;
+
+      adf.remove(5);
+      adf.remove(4);
+      adf.remove(0, 3);
+
+      if (adf == "9") {
+        Serial.println("A26");
+
+        adf2 = ADF1freq;
+        adf2.remove(5);
+        adf2.remove(4);
+        adf2.remove(3);
+        adf2.remove(0, 2);
+        if (adf2 == "9") {
+          Serial.println("A25");
+        }
+      }
+      Serial.println("A27");
+      break;
+
+    case XPDR:
+      // TODO: Logik für die 2 ersten Digits des XPDR-Codes finden
+      // from xpdr 1234 remove 1, 3 and 4 and check if remaining is 9
+      tt = Transponder;
+      tt.remove(3);
+      tt.remove(2);
+      tt.remove(0, 1);
+      Serial.println(tt);
+      if (tt == "7") {
+        Serial.println("A34");
+      }
+      Serial.println("A35");
+      break;
+    default:
+      Serial.println("Nothing to increment");
+  }
+}
+
+void comm_rotary_increment_fraction() {
+  String adf;
+  String adf2;
+  String tt;
+
+  switch (comm_select) {
+    case COM_1:
+      Serial.println("A04");
+      break;
+    case COM_2:
+      Serial.println("A10");
+      break;
+    case NAV_1:
+      Serial.println("A16");
+      break;
+    case NAV_2:
+      Serial.println("A22");
+      break;
+    case ADF_1:
+      Serial.println("A28");
+      break;
+    case XPDR:
+      // TODO: Logik für die 2 letzten Digits des XPDR-Codes finden
+      // from xpdr 1234 remove 1, 2 and 3 and check if remaining is 9
+      tt = Transponder;
+      tt.remove(0, 3);
+      Serial.println(tt);
+      if (tt == "7") {
+        Serial.println("A36");
+      }
+      Serial.println("A37");
+      break;
+    default:
+      Serial.println("Nothing to increment");
   }
 }
 
 // increasing a comm rotary can mean a lot of things.
 // we need to find out which setting is activated and increase exactly that.
-void comm_rotary_increment(bool decimal) {
+void comm_rotary_decrement_decimal() {
   String adf;
   String adf2;
+  String tt;
 
-  if (decimal) {
-    switch (comm_select) {
-      case COM_1:
-        Serial.println("A02");
-        break;
-      case COM_2:
-        Serial.println("A08");
-        break;
-      case NAV_1:
-        Serial.println("A14");
-        break;
-      case NAV_2:
-        Serial.println("A20");
-        break;
-      case ADF_1:
-        adf = ADF1freq;
+  switch (comm_select) {
+    case COM_1:
+      Serial.println("A01");
+      break;
+    case COM_2:
+      Serial.println("A07");
+      break;
+    case NAV_1:
+      Serial.println("A13");
+      break;
+    case NAV_2:
+      Serial.println("A19");
+      break;
+    case ADF_1:
+      adf = ADF1freq;
 
-        adf.remove(5);
-        adf.remove(4);
-        adf.remove(0, 3);
+      adf.remove(5);
+      adf.remove(4);
+      adf.remove(0, 3);
 
-        if (adf == "9") {
-          Serial.println("A26");
+      if (adf == "0") {
+        Serial.println("A30");
 
-          adf2 = ADF1freq;
-          adf2.remove(5);
-          adf2.remove(4);
-          adf2.remove(3);
-          adf2.remove(0, 2);
-          if (adf2 == "9") {
-            Serial.println("A25");
-          }
+        adf2 = ADF1freq;
+        adf2.remove(5);
+        adf2.remove(4);
+        adf2.remove(3);
+        adf2.remove(0, 2);
+        if (adf2 == "9") {
+          Serial.println("A29");
         }
-        Serial.println("A27");
-        break;
-
-      case XPDR:
-        // TODO: Logik für die 2 ersten Digits des XPDR-Codes finden
-        // from xpdr 1234 remove 1, 3 and 4 and check if remaining is 9
-        String tt = Transponder;
-        tt.remove(3);
-        tt.remove(2);
-        tt.remove(0, 1);
-        Serial.println(tt);
-        if (tt == "7") {
-          Serial.println("A34");
-        }
-        Serial.println("A35");
-        break;
-    }
-  } else {
-    switch (comm_select) {
-      case COM_1:
-        Serial.println("A04");
-        break;
-      case COM_2:
-        Serial.println("A10");
-        break;
-      case NAV_1:
-        Serial.println("A16");
-        break;
-      case NAV_2:
-        Serial.println("A22");
-        break;
-      case ADF_1:
-        Serial.println("A28");
-        break;
-      case XPDR:
-        // TODO: Logik für die 2 letzten Digits des XPDR-Codes finden
-        // from xpdr 1234 remove 1, 2 and 3 and check if remaining is 9
-        String tt = Transponder;
-        tt.remove(0, 3);
-        Serial.println(tt);
-        if (tt == "7") {
-          Serial.println("A36");
-        }
-        Serial.println("A37");
-        break;
-    }
+      }
+      Serial.println("A31");
+      break;
+    case XPDR:
+      // TODO: Logik für die 2 ersten Digits des XPDR-Codes finden
+      // from xpdr 1234 remove 1, 3 and 4 and check if remaining is 0
+      tt = Transponder;
+      tt.remove(3);
+      tt.remove(2);
+      tt.remove(0, 1);
+      if (tt == "0") {
+        Serial.println("A38");
+      }
+      Serial.println("A39");
+      break;
+    default:
+      Serial.println("Nothing to decrement");
   }
 }
 
-// increasing a comm rotary can mean a lot of things.
-// we need to find out which setting is activated and increase exactly that.
-void comm_rotary_decrement(bool decimal) {
+void comm_rotary_decrement_fraction()  {
   String adf;
   String adf2;
-
-  if (decimal) {
-    switch (comm_select) {
-      case COM_1:
-        Serial.println("A01");
-        break;
-      case COM_2:
-        Serial.println("A07");
-        break;
-      case NAV_1:
-        Serial.println("A13");
-        break;
-      case NAV_2:
-        Serial.println("A19");
-        break;
-      case ADF_1:
-        adf = ADF1freq;
-
-        adf.remove(5);
-        adf.remove(4);
-        adf.remove(0, 3);
-
-        if (adf == "0") {
-          Serial.println("A30");
-
-          adf2 = ADF1freq;
-          adf2.remove(5);
-          adf2.remove(4);
-          adf2.remove(3);
-          adf2.remove(0, 2);
-          if (adf2 == "9") {
-            Serial.println("A29");
-          }
-        }
-        Serial.println("A31");
-        break;
-      case XPDR:
-        // TODO: Logik für die 2 ersten Digits des XPDR-Codes finden
-        // from xpdr 1234 remove 1, 3 and 4 and check if remaining is 0
-        String tt = Transponder;
-        tt.remove(3);
-        tt.remove(2);
-        tt.remove(0, 1);
-        if (tt == "0") {
-          Serial.println("A38");
-        }
-        Serial.println("A39");
-        break;
-    }
-  } else {
-    switch (comm_select) {
-      case COM_1:
-        Serial.println("A03");
-        break;
-      case COM_2:
-        Serial.println("A09");
-        break;
-      case NAV_1:
-        Serial.println("A15");
-        break;
-      case NAV_2:
-        Serial.println("A21");
-        break;
-      case ADF_1:
-        // TODO: codeswitch für alle Frequenzen finden
-        Serial.println("A32");
-        break;
-      case XPDR:
-        // TODO: Logik für die 2 letzten Digits des XPDR-Codes finden
-        // from xpdr 1234 remove 1, 2 and 3 and check if remaining is 0
-        String tt = Transponder;
-        tt.remove(0, 3);
-        Serial.println(Transponder);
-        Serial.println(tt);
-        if (tt == "0") {
-          Serial.println("A40");
-        }
-        Serial.println("A41");
-        break;
-    }
+  String tt;
+  
+  switch (comm_select) {
+    case COM_1:
+      Serial.println("A03");
+      break;
+    case COM_2:
+      Serial.println("A09");
+      break;
+    case NAV_1:
+      Serial.println("A15");
+      break;
+    case NAV_2:
+      Serial.println("A21");
+      break;
+    case ADF_1:
+      // TODO: codeswitch für alle Frequenzen finden
+      Serial.println("A32");
+      break;
+    case XPDR:
+      // TODO: Logik für die 2 letzten Digits des XPDR-Codes finden
+      // from xpdr 1234 remove 1, 2 and 3 and check if remaining is 0
+      tt = Transponder;
+      tt.remove(0, 3);
+      Serial.println(Transponder);
+      Serial.println(tt);
+      if (tt == "0") {
+        Serial.println("A40");
+      }
+      Serial.println("A41");
+      break;
+    default:
+      Serial.println("Nothing to increment");
   }
 }
 
@@ -806,7 +822,7 @@ void LESSTHAN() {   // The first identifier was "<"
 
     case 'H':
       ElevatorTrim = readMultipleChars(4);
-      OLED_1();
+      OLED_2();
       break;
   }
   change = true;
@@ -819,7 +835,7 @@ void QUESTION() {   // The first identifier was "?"
   switch (CodeIn) { // Now lets find what to do with it
     case 'Z':
       RudderTrim = readMultipleChars(4);
-      OLED_1();
+      OLED_2();
       break;
     case 'k':
       AltimeterSettinginHg = readMultipleChars(5);
